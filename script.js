@@ -153,6 +153,42 @@ async function fetchAndParseDataset() {
     });
 
     groupedData = Array.from(groupsMap.values());
+
+    // ── Pre-load any scores already filled in the Excel ──────────────────
+    // Do NOT overwrite scores the annotator has already entered this session
+    flatData.forEach((row, idx) => {
+        // If this row already has an evaluation saved from local storage, skip it
+        if (evaluations[idx] && evaluations[idx].ef !== '') return;
+
+        const hdrs = Object.keys(row).filter(k => k !== '__sheet');
+
+        const getC = (keys) => {
+            const k = hdrs.find(h => keys.some(kk => h.toLowerCase().includes(kk.toLowerCase())));
+            return k ? String(row[k]).trim() : '';
+        };
+
+        const ef = getC(['ef (0', 'ef(0', ' ef ']);
+        const rr = getC(['rr (0', 'rr(0', ' rr ']);
+        const lq = getC(['lq (0', 'lq(0', ' lq ']);
+        const pp = getC(['pp (0', 'pp(0', ' pp ']);
+        const comment = getC(['comments', 'comment']);
+
+        // Only pre-load if at least one score exists in the Excel
+        const validVals = ['0', '1', '2'];
+        if (validVals.includes(ef) || validVals.includes(rr) || validVals.includes(lq) || validVals.includes(pp)) {
+            evaluations[idx] = {
+                ef:      validVals.includes(ef) ? ef : '',
+                rr:      validVals.includes(rr) ? rr : '',
+                lq:      validVals.includes(lq) ? lq : '',
+                pp:      validVals.includes(pp) ? pp : '',
+                errors:  [],
+                comment: comment
+            };
+        }
+    });
+
+    // Persist the pre-loaded evaluations to local storage
+    localStorage.setItem(`cabIgboEval_${annotatorId}`, JSON.stringify(evaluations));
 }
 
 // ─── Type Selection ───────────────────────────────────────────────────
