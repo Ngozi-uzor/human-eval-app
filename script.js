@@ -56,7 +56,7 @@ const ui = {
 };
 
 // ─── Allowed Annotator IDs (add more names here when needed) ─────────
-const ALLOWED_IDS = ['ngozi'];
+const ALLOWED_IDS = ['ngozi', 'peace'];
 
 // ─── Login ────────────────────────────────────────────────────────────
 ui.btnLogin.addEventListener('click', async () => {
@@ -124,53 +124,63 @@ async function fetchAndParseDataset() {
         sheet.rows.forEach(row => flatData.push({ ...row, __sheet: sheet.sheetName }));
     });
 
-    // Helper
+    // Helper: find column value by keyword matching
     const getCol = (keys, row, hdrs) => {
         const k = hdrs.find(h => keys.some(kk => h.toLowerCase().includes(kk.toLowerCase())));
         return k ? String(row[k]).trim() : "";
     };
 
-    // Build groups: one group per (sheet × question number)
+    // ── Grouping with carry-forward ──────────────────────────────────────
+    // In the Excel, only the FIRST model row per question has the question
+    // text/number filled in. Models B-H rows have blank question cells.
+    // We carry the current group forward and attach all blank rows to it.
     const groupsMap = new Map();
     let flatIdx = 0;
+    let lastGroupKey = null;
 
     allSheetData.forEach(sheet => {
-        sheet.rows.forEach((row, li) => {
-            const qNum  = getCol(['question number', 'question no', 'qnum', 'q_num', 'q num'], row, sheet.hdrs);
+        lastGroupKey = null; // reset between sheets so types don't bleed
+
+        sheet.rows.forEach(row => {
+            const qNum  = getCol(['question number', 'question no', 'qnum', 'q_num'], row, sheet.hdrs);
             const qText = getCol(['question text', 'question', 'input', 'prompt text'], row, sheet.hdrs);
             const pType = getCol(['prompt type'], row, sheet.hdrs);
-            const domain= getCol(['domain'], row, sheet.hdrs);
+            const domain = getCol(['domain'], row, sheet.hdrs);
 
-            if (!qText) { flatIdx++; return; }
+            if (qText || qNum) {
+                // New question row — create a new group
+                const groupKey = `${sheet.sheetName}||${qNum || qText}`;
+                lastGroupKey = groupKey;
 
-            const groupKey = `${sheet.sheetName}||${qNum || qText}`;
-
-            if (!groupsMap.has(groupKey)) {
-                groupsMap.set(groupKey, {
-                    questionId: groupsMap.size + 1,
-                    sheetName:  sheet.sheetName,
-                    promptType: pType,
-                    domain,
-                    qNum,
-                    questionText: qText,
-                    rows: []
-                });
+                if (!groupsMap.has(groupKey)) {
+                    groupsMap.set(groupKey, {
+                        questionId: groupsMap.size + 1,
+                        sheetName:  sheet.sheetName,
+                        promptType: pType,
+                        domain,
+                        qNum,
+                        questionText: qText || `Question ${qNum}`,
+                        rows: []
+                    });
+                }
             }
-            groupsMap.get(groupKey).rows.push({ rowIndex: flatIdx, rowData: row, hdrs: sheet.hdrs });
+
+            // Add this row (whether new question or continuation) to the current group
+            if (lastGroupKey && groupsMap.has(lastGroupKey)) {
+                groupsMap.get(lastGroupKey).rows.push({ rowIndex: flatIdx, rowData: row, hdrs: sheet.hdrs });
+            }
+
             flatIdx++;
         });
     });
 
     groupedData = Array.from(groupsMap.values());
 
-    // ── Pre-load any scores already filled in the Excel ──────────────────
-    // Do NOT overwrite scores the annotator has already entered this session
+    // ── Pre-load existing Excel scores ───────────────────────────────────
     flatData.forEach((row, idx) => {
-        // If this row already has an evaluation saved from local storage, skip it
         if (evaluations[idx] && evaluations[idx].ef !== '') return;
 
         const hdrs = Object.keys(row).filter(k => k !== '__sheet');
-
         const getC = (keys) => {
             const k = hdrs.find(h => keys.some(kk => h.toLowerCase().includes(kk.toLowerCase())));
             return k ? String(row[k]).trim() : '';
