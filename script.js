@@ -92,55 +92,74 @@ async function fetchAndParseDataset() {
     const data = new Uint8Array(arrayBuffer);
     const workbook = XLSX.read(data, {type: 'array'});
     
-    let allData = [];
-    let foundHeaders = [];
+    // Process each sheet separately to avoid mixing types (EN-EN, EN-IG, IG-IG)
+    const allSheetData = []; // [{sheetName, rows, headers}]
 
     workbook.SheetNames.forEach(sheetName => {
         const worksheet = workbook.Sheets[sheetName];
-        const data = XLSX.utils.sheet_to_json(worksheet, {defval: ""});
+        const sheetRows = XLSX.utils.sheet_to_json(worksheet, {defval: ""});
         
-        if (data.length > 0) {
-            const sheetHeaders = Object.keys(data[0]);
-            // Only include sheets that look like actual evaluation tables
-            if (sheetHeaders.some(h => h.toLowerCase().includes('question') || h.toLowerCase().includes('prompt') || h.toLowerCase().includes('model'))) {
-                allData = allData.concat(data);
-                if (foundHeaders.length === 0) foundHeaders = sheetHeaders;
+        if (sheetRows.length > 0) {
+            const sheetHeaders = Object.keys(sheetRows[0]);
+            // Only include actual annotation sheets (not instruction/decoder sheets)
+            const hasQuestionCol = sheetHeaders.some(h => h.toLowerCase().includes('question'));
+            const hasModelCol = sheetHeaders.some(h => h.toLowerCase().includes('model'));
+            if (hasQuestionCol && hasModelCol) {
+                allSheetData.push({ sheetName, rows: sheetRows, headers: sheetHeaders });
+                if (!headers.length) headers = sheetHeaders;
             }
         }
     });
 
-    flatData = allData;
-    if (flatData.length === 0) throw new Error("Could not find any questions in the dataset.");
-    
-    headers = foundHeaders;
+    if (allSheetData.length === 0) throw new Error("Could not find any annotation sheets in the dataset.");
 
-    // Helper to find column keys
-    const getCol = (possibleKeys, row) => {
-        const key = headers.find(h => possibleKeys.some(k => h.toLowerCase().includes(k.toLowerCase())));
-        return key ? row[key] : "";
+    // Helper to find a column value using keyword matching
+    const getColFrom = (possibleKeys, row, hdrs) => {
+        const key = hdrs.find(h => possibleKeys.some(k => h.toLowerCase().includes(k.toLowerCase())));
+        return key ? String(row[key]) : "";
     };
 
-    // Group by Question
-    const groupsMap = new Map();
-    
-    flatData.forEach((row, idx) => {
-        // Assume Question text is the unique identifier for grouping
-        const qText = getCol(['question', 'prompt', 'input'], row);
-        const pType = getCol(['prompt type', 'type'], row);
-        const cond = getCol(['condition', 'persona'], row);
-        
-        if (!qText) return; // Skip empty rows
+    // Build flat data (all sheets combined, tagged with sheet name)
+    flatData = [];
+    allSheetData.forEach(sheet => {
+        sheet.rows.forEach(row => {
+            flatData.push({ ...row, __sheet: sheet.sheetName });
+        });
+    });
 
-        if (!groupsMap.has(qText)) {
-            groupsMap.set(qText, {
-                questionId: groupsMap.size + 1,
-                promptType: pType,
-                condition: cond,
-                questionText: qText,
-                rows: []
-            });
-        }
-        groupsMap.get(qText).rows.push({ rowIndex: idx, rowData: row });
+    // Group rows per sheet, per Question Number
+    const groupsMap = new Map();
+
+    allSheetData.forEach(sheet => {
+        const hdrs = sheet.headers;
+
+        sheet.rows.forEach((row, localIdx) => {
+            const globalIdx = flatData.findIndex(r => r === row || (r.__sheet === sheet.sheetName && Object.keys(row).every(k => r[k] === row[k])));
+
+            const qNum  = getColFrom(['question number', 'question no', 'q_num', 'qnum'], row, hdrs);
+            const qText = getColFrom(['question text', 'question', 'prompt text', 'input'], row, hdrs);
+            const pType = getColFrom(['prompt type'], row, hdrs);
+            const domain = getColFrom(['domain'], row, hdrs);
+
+            if (!qText) return;
+
+            // Unique key = sheet + question number (prevents cross-type mixing)
+            const groupKey = `${sheet.sheetName}||${qNum || qText}`;
+
+            if (!groupsMap.has(groupKey)) {
+                groupsMap.set(groupKey, {
+                    questionId: groupsMap.size + 1,
+                    promptType: pType,
+                    sheetName: sheet.sheetName,
+                    domain: domain,
+                    questionText: qText,
+                    rows: []
+                });
+            }
+            // Push using actual index in flatData
+            const flatIdx = flatData.findIndex((r, i) => r.__sheet === sheet.sheetName && r === flatData.filter(x => x.__sheet === sheet.sheetName)[localIdx]);
+            groupsMap.get(groupKey).rows.push({ rowIndex: flatIdx !== -1 ? flatIdx : flatData.length - sheet.rows.length + localIdx, rowData: row, hdrs });
+        });
     });
 
     groupedData = Array.from(groupsMap.values());
@@ -197,8 +216,13 @@ function renderEvaluationScreen() {
     };
 
     group.rows.forEach((r, idx) => {
-        const modelName = getCol(['model'], r.rowData) || `Model ${String.fromCharCode(65 + idx)}`; // Model A, B, C...
-        const responseText = getCol(['response', 'generation', 'output'], r.rowData);
+        const hdrs = r.hdrs || headers;
+        const getColLocal = (keys, row) => {
+            const key = hdrs.find(h => keys.some(k => h.toLowerCase().includes(k.toLowerCase())));
+            return key ? String(row[key]) : '';
+        };
+        const modelName = getColLocal(['model code', 'model name', 'model'], r.rowData) || `Model ${String.fromCharCode(65 + idx)}`;
+        const responseText = getColLocal(['model answer', 'answer', 'response', 'generation', 'output'], r.rowData);
         const ev = evaluations[r.rowIndex] || { ef:'', rr:'', lq:'', pp:'', errors:[], comment:'' };
 
         const card = document.createElement('div');
