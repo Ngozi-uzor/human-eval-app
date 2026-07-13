@@ -55,10 +55,19 @@ const ui = {
     btnNext:        document.getElementById('btn-next-q')
 };
 
+// ─── Allowed Annotator IDs (add more names here when needed) ─────────
+const ALLOWED_IDS = ['ngozi'];
+
 // ─── Login ────────────────────────────────────────────────────────────
 ui.btnLogin.addEventListener('click', async () => {
-    const val = ui.inputId.value.trim();
+    const val = ui.inputId.value.trim().toLowerCase();
     if (!val) { alert("Please enter your Annotator ID."); return; }
+
+    if (!ALLOWED_IDS.includes(val)) {
+        alert("❌ Unrecognised Annotator ID.\nPlease check your ID and try again.");
+        return;
+    }
+
     annotatorId = val;
 
     const saved = localStorage.getItem(`cabIgboEval_${annotatorId}`);
