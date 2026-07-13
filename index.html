@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CAB-Igbo Cultural Evaluation</title>
+    <title>CAB-Igbo Human Evaluation</title>
     <link rel="stylesheet" href="style.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -19,6 +19,17 @@
         <div class="loading-spinner">Loading Dataset...</div>
     </div>
 
+    <!-- Guidelines Modal -->
+    <div id="guidelines-modal" class="modal hidden-modal">
+        <div class="modal-content glass-panel">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+                <h2>Annotator Guidelines</h2>
+                <span id="close-modal" class="close-btn">&times;</span>
+            </div>
+            <iframe src="Annotator_Guidelines.pdf" width="100%" height="600px" style="border:none;border-radius:0.5rem;background:white;"></iframe>
+        </div>
+    </div>
+
     <div class="app-container">
         <header>
             <h1>CAB-Igbo Human Evaluation</h1>
@@ -26,23 +37,38 @@
             <button id="btn-guidelines" class="btn-secondary mt-4">View Annotator Guidelines</button>
         </header>
 
-        <!-- Screen 0: Annotator Onboarding -->
-        <main id="onboarding-screen" class="glass-panel active-screen">
-            <h2>Welcome Annotator</h2>
-            <p>Please enter your Annotator ID or Name to begin. This will load your dashboard.</p>
-            <div class="input-group">
+        <!-- SCREEN 1: Login -->
+        <main id="screen-login" class="glass-panel active-screen">
+            <h2>Welcome, Annotator</h2>
+            <p>Please enter your Annotator ID to begin your session.</p>
+            <div class="input-group mt-4">
                 <input type="text" id="annotator-id" placeholder="e.g. Annotator_01" class="text-input" />
-                <button id="btn-start-onboarding" class="btn-primary mt-4">Load Dashboard</button>
+                <button id="btn-login" class="btn-primary mt-4">Continue</button>
             </div>
         </main>
 
-        <!-- Screen 1: Dashboard -->
-        <main id="dashboard-screen" class="glass-panel hidden-screen">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
-                <h2>Your Evaluation Dashboard</h2>
-                <button id="btn-export-dash" class="btn-export">Export Progress CSV</button>
+        <!-- SCREEN 2: Type Selection -->
+        <main id="screen-type" class="glass-panel hidden-screen">
+            <h2>Select Evaluation Type</h2>
+            <p style="color:var(--text-secondary);margin-bottom:2rem;">Choose which batch of questions you are evaluating today.</p>
+            <div class="type-grid" id="type-grid">
+                <!-- Populated dynamically -->
             </div>
-            
+            <div style="margin-top:2rem;text-align:right;">
+                <button id="btn-logout" class="btn-secondary">← Change ID</button>
+            </div>
+        </main>
+
+        <!-- SCREEN 3: Dashboard -->
+        <main id="screen-dashboard" class="glass-panel hidden-screen">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;flex-wrap:wrap;gap:1rem;">
+                <div>
+                    <button id="btn-back-type" class="btn-secondary" style="margin-bottom:0.5rem;">← Back to Types</button>
+                    <h2 id="dash-type-title">Type 1 Questions</h2>
+                </div>
+                <button id="btn-export-dash" class="btn-export">Export Progress (.xlsx)</button>
+            </div>
+
             <div class="dashboard-stats">
                 <div class="stat-card">
                     <h3 id="dash-total">0</h3>
@@ -58,54 +84,39 @@
                 </div>
             </div>
 
-            <h3>Questions List</h3>
-            <div class="question-list" id="question-list-container">
-                <!-- Dynamically populated list of questions -->
-            </div>
+            <h3 style="margin-bottom:1rem;">Questions List</h3>
+            <div class="question-list" id="question-list-container"></div>
         </main>
 
-        <!-- Screen 2: Evaluation Interface -->
-        <main id="eval-screen" class="glass-panel hidden-screen" style="max-width: 1200px; margin: 0 auto;">
+        <!-- SCREEN 4: Evaluation -->
+        <main id="screen-eval" class="glass-panel hidden-screen" style="max-width:1200px;margin:0 auto;">
             <div class="top-bar">
-                <button id="btn-back-dash" class="btn-secondary">&larr; Back to Dashboard</button>
+                <button id="btn-back-dash" class="btn-secondary">← Back to Dashboard</button>
                 <div class="progress-text">
                     Question <span id="current-item-idx">0</span> of <span id="total-items">0</span>
                 </div>
             </div>
 
-            <!-- Metadata Display -->
             <div class="metadata-bar mt-4">
-                <div class="meta-item"><strong>Prompt Type:</strong> <span id="prompt-type-display">-</span></div>
-                <div class="meta-item"><strong>Condition:</strong> <span id="condition-display">-</span></div>
+                <div class="meta-item"><strong>Type:</strong> <span id="meta-type">-</span></div>
+                <div class="meta-item"><strong>Domain:</strong> <span id="meta-domain">-</span></div>
+                <div class="meta-item"><strong>Q No:</strong> <span id="meta-qnum">-</span></div>
             </div>
 
-            <div class="data-block" style="margin-bottom: 2rem;">
+            <div class="data-block" style="margin-bottom:2rem;">
                 <h3>Question</h3>
-                <div class="scroll-box" id="question-display" style="height: auto; min-height: 80px;">Loading...</div>
+                <div class="scroll-box" id="question-display" style="height:auto;min-height:80px;"></div>
             </div>
 
-            <h3 style="margin-bottom: 1rem;">Model Responses</h3>
-            <div id="models-container">
-                <!-- Model cards will be generated here -->
-            </div>
+            <h3 style="margin-bottom:1rem;">Model Responses</h3>
+            <div id="models-container"></div>
 
-            <div class="actions" style="margin-top: 3rem;">
-                <button id="btn-prev-q" class="btn-secondary">Previous Question</button>
+            <div class="actions" style="margin-top:3rem;display:flex;gap:1rem;flex-wrap:wrap;justify-content:space-between;">
+                <button id="btn-prev-q" class="btn-secondary">← Previous</button>
                 <button id="btn-save-q" class="btn-success">Save & Return to Dashboard</button>
-                <button id="btn-next-q" class="btn-primary">Next Question</button>
+                <button id="btn-next-q" class="btn-primary">Next →</button>
             </div>
         </main>
-    </div>
-
-    <!-- Guidelines Modal -->
-    <div id="guidelines-modal" class="modal hidden-modal">
-        <div class="modal-content glass-panel">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                <h2>Annotator Guidelines</h2>
-                <span id="close-modal" class="close-btn">&times;</span>
-            </div>
-            <iframe src="Annotator_Guidelines.pdf" width="100%" height="600px" style="border: none; border-radius: 0.5rem; background: white;"></iframe>
-        </div>
     </div>
 
     <script src="script.js"></script>

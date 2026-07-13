@@ -210,6 +210,58 @@ header p {
     overflow: hidden;
     text-overflow: ellipsis;
 }
+.domain-tag {
+    margin-top: 0.5rem;
+    font-size: 0.75rem;
+    padding: 0.2rem 0.5rem;
+    background: #eff6ff;
+    color: var(--primary-color);
+    border-radius: 0.25rem;
+    display: inline-block;
+}
+
+/* Type Selection */
+.type-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 1.5rem;
+}
+.type-card {
+    background: #ffffff;
+    border: 2px solid var(--glass-border);
+    border-radius: 1rem;
+    padding: 1.5rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+.type-card:hover {
+    border-color: var(--primary-color);
+    box-shadow: 0 4px 12px rgba(37,99,235,0.15);
+    transform: translateY(-3px);
+}
+.type-card h3 {
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+    color: var(--text-primary);
+}
+.type-card p {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.75rem;
+}
+.progress-bar {
+    height: 6px;
+    background: #e5e7eb;
+    border-radius: 99px;
+    overflow: hidden;
+}
+.progress-fill {
+    height: 100%;
+    background: var(--success-color);
+    border-radius: 99px;
+    transition: width 0.4s ease;
+}
 
 /* Top Bar */
 .top-bar {

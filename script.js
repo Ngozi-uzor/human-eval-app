@@ -1,10 +1,12 @@
-// Application State
-let flatData = [];
-let groupedData = []; // Array of { questionId, promptType, condition, questionText, rows: [{rowIndex, rowData}] }
+// ─── State ───────────────────────────────────────────────────────────
+let flatData      = [];   // All rows (all sheets combined)
+let groupedData   = [];   // All groups regardless of type
+let filteredData  = [];   // Groups for the currently selected type
 let currentGroupIndex = 0;
-let evaluations = {}; // Key: rowIndex, Value: { ef, rr, lq, pp, errors:[], comment }
-let headers = [];
-let annotatorId = "";
+let evaluations   = {};   // {rowIndex: {ef, rr, lq, pp, errors, comment}}
+let headers       = [];
+let annotatorId   = "";
+let selectedType  = "";   // e.g. "Type 1 Annotation"
 
 const ERROR_TYPES = [
     "Hallucination", "Shallow Description", "Model Breakdown", "Repetition",
@@ -13,331 +15,323 @@ const ERROR_TYPES = [
     "Wrong Language", "Contradicts Prompt"
 ];
 
-// DOM Elements
+// ─── Screens ──────────────────────────────────────────────────────────
 const screens = {
-    onboarding: document.getElementById('onboarding-screen'),
-    dashboard: document.getElementById('dashboard-screen'),
-    eval: document.getElementById('eval-screen')
+    login:     document.getElementById('screen-login'),
+    type:      document.getElementById('screen-type'),
+    dashboard: document.getElementById('screen-dashboard'),
+    eval:      document.getElementById('screen-eval')
 };
 
-const ui = {
-    inputId: document.getElementById('annotator-id'),
-    btnStart: document.getElementById('btn-start-onboarding'),
-    loading: document.getElementById('loading-overlay'),
-    
-    // Dashboard
-    dashTotal: document.getElementById('dash-total'),
-    dashCompleted: document.getElementById('dash-completed'),
-    dashRemaining: document.getElementById('dash-remaining'),
-    qList: document.getElementById('question-list-container'),
-    btnExportDash: document.getElementById('btn-export-dash'),
-    
-    // Eval
-    btnBackDash: document.getElementById('btn-back-dash'),
-    currIdx: document.getElementById('current-item-idx'),
-    totalItems: document.getElementById('total-items'),
-    promptType: document.getElementById('prompt-type-display'),
-    condition: document.getElementById('condition-display'),
-    questionText: document.getElementById('question-display'),
-    modelsContainer: document.getElementById('models-container'),
-    btnPrev: document.getElementById('btn-prev-q'),
-    btnSave: document.getElementById('btn-save-q'),
-    btnNext: document.getElementById('btn-next-q')
-};
-
-// Initialize
-function init() {
-    showScreen('onboarding');
-}
-
-function showScreen(screenName) {
+function showScreen(name) {
     Object.values(screens).forEach(s => s.classList.add('hidden-screen'));
-    screens[screenName].classList.remove('hidden-screen');
+    screens[name].classList.remove('hidden-screen');
 }
 
-// Onboarding & Loading
-ui.btnStart.addEventListener('click', async () => {
+// ─── UI refs ─────────────────────────────────────────────────────────
+const ui = {
+    inputId:        document.getElementById('annotator-id'),
+    btnLogin:       document.getElementById('btn-login'),
+    loading:        document.getElementById('loading-overlay'),
+    typeGrid:       document.getElementById('type-grid'),
+    btnLogout:      document.getElementById('btn-logout'),
+    dashTitle:      document.getElementById('dash-type-title'),
+    dashTotal:      document.getElementById('dash-total'),
+    dashCompleted:  document.getElementById('dash-completed'),
+    dashRemaining:  document.getElementById('dash-remaining'),
+    qList:          document.getElementById('question-list-container'),
+    btnExportDash:  document.getElementById('btn-export-dash'),
+    btnBackType:    document.getElementById('btn-back-type'),
+    btnBackDash:    document.getElementById('btn-back-dash'),
+    currIdx:        document.getElementById('current-item-idx'),
+    totalItems:     document.getElementById('total-items'),
+    metaType:       document.getElementById('meta-type'),
+    metaDomain:     document.getElementById('meta-domain'),
+    metaQnum:       document.getElementById('meta-qnum'),
+    questionText:   document.getElementById('question-display'),
+    modelsContainer:document.getElementById('models-container'),
+    btnPrev:        document.getElementById('btn-prev-q'),
+    btnSave:        document.getElementById('btn-save-q'),
+    btnNext:        document.getElementById('btn-next-q')
+};
+
+// ─── Login ────────────────────────────────────────────────────────────
+ui.btnLogin.addEventListener('click', async () => {
     const val = ui.inputId.value.trim();
-    if (!val) {
-        alert("Please enter an Annotator ID.");
-        return;
-    }
+    if (!val) { alert("Please enter your Annotator ID."); return; }
     annotatorId = val;
-    
-    // Load local storage
+
     const saved = localStorage.getItem(`cabIgboEval_${annotatorId}`);
-    if (saved) {
-        evaluations = JSON.parse(saved);
-    } else {
-        evaluations = {};
-    }
+    evaluations = saved ? JSON.parse(saved) : {};
 
     ui.loading.classList.remove('hidden-modal');
     try {
         await fetchAndParseDataset();
-        renderDashboard();
-        showScreen('dashboard');
+        renderTypeSelection();
+        showScreen('type');
     } catch (err) {
-        alert("Error loading dataset: " + err.message);
+        alert("Error loading dataset: " + err.message + "\n\nMake sure dataset.xlsx is in the same folder as index.html.");
     } finally {
         ui.loading.classList.add('hidden-modal');
     }
 });
 
+ui.btnLogout.addEventListener('click', () => {
+    annotatorId = "";
+    selectedType = "";
+    ui.inputId.value = "";
+    showScreen('login');
+});
+
+// ─── Dataset Loading ──────────────────────────────────────────────────
 async function fetchAndParseDataset() {
     const response = await fetch('dataset.xlsx');
-    if (!response.ok) throw new Error("Could not find dataset.xlsx in the directory.");
-    
-    const arrayBuffer = await response.arrayBuffer();
-    const data = new Uint8Array(arrayBuffer);
-    const workbook = XLSX.read(data, {type: 'array'});
-    
-    // Process each sheet separately to avoid mixing types (EN-EN, EN-IG, IG-IG)
-    const allSheetData = []; // [{sheetName, rows, headers}]
+    if (!response.ok) throw new Error("dataset.xlsx not found.");
+
+    const ab = await response.arrayBuffer();
+    const workbook = XLSX.read(new Uint8Array(ab), { type: 'array' });
+
+    const allSheetData = [];
 
     workbook.SheetNames.forEach(sheetName => {
-        const worksheet = workbook.Sheets[sheetName];
-        const sheetRows = XLSX.utils.sheet_to_json(worksheet, {defval: ""});
-        
-        if (sheetRows.length > 0) {
-            const sheetHeaders = Object.keys(sheetRows[0]);
-            // Only include actual annotation sheets (not instruction/decoder sheets)
-            const hasQuestionCol = sheetHeaders.some(h => h.toLowerCase().includes('question'));
-            const hasModelCol = sheetHeaders.some(h => h.toLowerCase().includes('model'));
-            if (hasQuestionCol && hasModelCol) {
-                allSheetData.push({ sheetName, rows: sheetRows, headers: sheetHeaders });
-                if (!headers.length) headers = sheetHeaders;
+        const ws = workbook.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+        if (rows.length > 0) {
+            const hdrs = Object.keys(rows[0]);
+            const hasQ = hdrs.some(h => h.toLowerCase().includes('question'));
+            const hasM = hdrs.some(h => h.toLowerCase().includes('model'));
+            if (hasQ && hasM) {
+                allSheetData.push({ sheetName, rows, hdrs });
+                if (!headers.length) headers = hdrs;
             }
         }
     });
 
-    if (allSheetData.length === 0) throw new Error("Could not find any annotation sheets in the dataset.");
+    if (!allSheetData.length) throw new Error("No annotation sheets found.");
 
-    // Helper to find a column value using keyword matching
-    const getColFrom = (possibleKeys, row, hdrs) => {
-        const key = hdrs.find(h => possibleKeys.some(k => h.toLowerCase().includes(k.toLowerCase())));
-        return key ? String(row[key]) : "";
-    };
-
-    // Build flat data (all sheets combined, tagged with sheet name)
+    // Build flatData with sheet tag
     flatData = [];
     allSheetData.forEach(sheet => {
-        sheet.rows.forEach(row => {
-            flatData.push({ ...row, __sheet: sheet.sheetName });
-        });
+        sheet.rows.forEach(row => flatData.push({ ...row, __sheet: sheet.sheetName }));
     });
 
-    // Group rows per sheet, per Question Number
+    // Helper
+    const getCol = (keys, row, hdrs) => {
+        const k = hdrs.find(h => keys.some(kk => h.toLowerCase().includes(kk.toLowerCase())));
+        return k ? String(row[k]).trim() : "";
+    };
+
+    // Build groups: one group per (sheet × question number)
     const groupsMap = new Map();
+    let flatIdx = 0;
 
     allSheetData.forEach(sheet => {
-        const hdrs = sheet.headers;
+        sheet.rows.forEach((row, li) => {
+            const qNum  = getCol(['question number', 'question no', 'qnum', 'q_num', 'q num'], row, sheet.hdrs);
+            const qText = getCol(['question text', 'question', 'input', 'prompt text'], row, sheet.hdrs);
+            const pType = getCol(['prompt type'], row, sheet.hdrs);
+            const domain= getCol(['domain'], row, sheet.hdrs);
 
-        sheet.rows.forEach((row, localIdx) => {
-            const globalIdx = flatData.findIndex(r => r === row || (r.__sheet === sheet.sheetName && Object.keys(row).every(k => r[k] === row[k])));
+            if (!qText) { flatIdx++; return; }
 
-            const qNum  = getColFrom(['question number', 'question no', 'q_num', 'qnum'], row, hdrs);
-            const qText = getColFrom(['question text', 'question', 'prompt text', 'input'], row, hdrs);
-            const pType = getColFrom(['prompt type'], row, hdrs);
-            const domain = getColFrom(['domain'], row, hdrs);
-
-            if (!qText) return;
-
-            // Unique key = sheet + question number (prevents cross-type mixing)
             const groupKey = `${sheet.sheetName}||${qNum || qText}`;
 
             if (!groupsMap.has(groupKey)) {
                 groupsMap.set(groupKey, {
                     questionId: groupsMap.size + 1,
+                    sheetName:  sheet.sheetName,
                     promptType: pType,
-                    sheetName: sheet.sheetName,
-                    domain: domain,
+                    domain,
+                    qNum,
                     questionText: qText,
                     rows: []
                 });
             }
-            // Push using actual index in flatData
-            const flatIdx = flatData.findIndex((r, i) => r.__sheet === sheet.sheetName && r === flatData.filter(x => x.__sheet === sheet.sheetName)[localIdx]);
-            groupsMap.get(groupKey).rows.push({ rowIndex: flatIdx !== -1 ? flatIdx : flatData.length - sheet.rows.length + localIdx, rowData: row, hdrs });
+            groupsMap.get(groupKey).rows.push({ rowIndex: flatIdx, rowData: row, hdrs: sheet.hdrs });
+            flatIdx++;
         });
     });
 
     groupedData = Array.from(groupsMap.values());
 }
 
-// Dashboard
+// ─── Type Selection ───────────────────────────────────────────────────
+function renderTypeSelection() {
+    // Get unique sheet names (= types)
+    const types = [...new Set(groupedData.map(g => g.sheetName))];
+
+    // Friendly labels
+    const labels = {
+        'Type 1': 'Type 1 — English Question, English Answer (EN→EN)',
+        'Type 2': 'Type 2 — English Question, Igbo Answer (EN→IG)',
+        'Type 3': 'Type 3 — Igbo Question, Igbo Answer (IG→IG)',
+    };
+
+    ui.typeGrid.innerHTML = '';
+    types.forEach(sheetName => {
+        // Match "Type 1", "Type 2", "Type 3" anywhere in the sheet name
+        const typeKey = Object.keys(labels).find(k => sheetName.includes(k)) || sheetName;
+        const label = labels[typeKey] || sheetName;
+
+        const qCount = groupedData.filter(g => g.sheetName === sheetName).length;
+        const doneCount = groupedData.filter(g => g.sheetName === sheetName && isGroupComplete(g)).length;
+
+        const card = document.createElement('div');
+        card.className = 'type-card';
+        card.innerHTML = `
+            <h3>${label}</h3>
+            <p>${doneCount} / ${qCount} questions completed</p>
+            <div class="progress-bar"><div class="progress-fill" style="width:${qCount>0?(doneCount/qCount*100):0}%"></div></div>
+        `;
+        card.addEventListener('click', () => {
+            selectedType = sheetName;
+            filteredData = groupedData.filter(g => g.sheetName === sheetName);
+            renderDashboard();
+            showScreen('dashboard');
+        });
+        ui.typeGrid.appendChild(card);
+    });
+}
+
+// ─── Dashboard ────────────────────────────────────────────────────────
+function isGroupComplete(group) {
+    return group.rows.every(r => {
+        const ev = evaluations[r.rowIndex];
+        return ev && ev.ef !== '' && ev.rr !== '' && ev.lq !== '' && ev.pp !== '';
+    });
+}
+
 function renderDashboard() {
+    // Derive friendly type label
+    const typeKey = ['Type 1','Type 2','Type 3'].find(k => selectedType.includes(k)) || selectedType;
+    ui.dashTitle.innerText = `${typeKey} — Questions`;
+
     let completedCount = 0;
     ui.qList.innerHTML = '';
 
-    groupedData.forEach((group, i) => {
-        // Check if all rows in this group are evaluated
-        const isCompleted = group.rows.every(r => {
-            const ev = evaluations[r.rowIndex];
-            return ev && ev.ef !== '' && ev.rr !== '' && ev.lq !== '' && ev.pp !== '';
-        });
-        
-        if (isCompleted) completedCount++;
+    filteredData.forEach((group, i) => {
+        const done = isGroupComplete(group);
+        if (done) completedCount++;
 
         const card = document.createElement('div');
-        card.className = `q-card ${isCompleted ? 'completed' : ''}`;
+        card.className = `q-card ${done ? 'completed' : ''}`;
         card.innerHTML = `
-            <h4>Question ${i + 1}</h4>
-            <p>${group.questionText}</p>
+            <h4>Q${group.qNum || (i + 1)} ${done ? '✓' : ''}</h4>
+            <p title="${group.questionText}">${group.questionText}</p>
+            ${group.domain ? `<span class="domain-tag">${group.domain}</span>` : ''}
         `;
         card.addEventListener('click', () => {
             currentGroupIndex = i;
-            renderEvaluationScreen();
+            renderEvalScreen();
+            showScreen('eval');
+            window.scrollTo(0, 0);
         });
         ui.qList.appendChild(card);
     });
 
-    ui.dashTotal.innerText = groupedData.length;
+    ui.dashTotal.innerText     = filteredData.length;
     ui.dashCompleted.innerText = completedCount;
-    ui.dashRemaining.innerText = groupedData.length - completedCount;
+    ui.dashRemaining.innerText = filteredData.length - completedCount;
 }
 
-// Evaluation Screen
-function renderEvaluationScreen() {
-    showScreen('eval');
-    const group = groupedData[currentGroupIndex];
-    
-    ui.currIdx.innerText = currentGroupIndex + 1;
-    ui.totalItems.innerText = groupedData.length;
-    ui.promptType.innerText = group.promptType || "-";
-    ui.condition.innerText = group.condition || "-";
+// ─── Back buttons ─────────────────────────────────────────────────────
+ui.btnBackType.addEventListener('click', () => showScreen('type'));
+ui.btnBackDash.addEventListener('click', () => {
+    saveCurrentState();
+    renderDashboard();
+    showScreen('dashboard');
+});
+
+// ─── Evaluation Screen ────────────────────────────────────────────────
+function renderEvalScreen() {
+    const group = filteredData[currentGroupIndex];
+
+    ui.currIdx.innerText   = currentGroupIndex + 1;
+    ui.totalItems.innerText = filteredData.length;
+    ui.metaType.innerText  = group.promptType || selectedType;
+    ui.metaDomain.innerText = group.domain || '-';
+    ui.metaQnum.innerText  = group.qNum || (currentGroupIndex + 1);
     ui.questionText.innerText = group.questionText;
 
     ui.modelsContainer.innerHTML = '';
 
-    const getCol = (possibleKeys, row) => {
-        const key = headers.find(h => possibleKeys.some(k => h.toLowerCase().includes(k.toLowerCase())));
-        return key ? row[key] : "No data";
-    };
-
     group.rows.forEach((r, idx) => {
         const hdrs = r.hdrs || headers;
-        const getColLocal = (keys, row) => {
-            const key = hdrs.find(h => keys.some(k => h.toLowerCase().includes(k.toLowerCase())));
-            return key ? String(row[key]) : '';
+        const getC = (keys) => {
+            const k = hdrs.find(h => keys.some(kk => h.toLowerCase().includes(kk.toLowerCase())));
+            return k ? String(r.rowData[k]).trim() : '';
         };
-        const modelName = getColLocal(['model code', 'model name', 'model'], r.rowData) || `Model ${String.fromCharCode(65 + idx)}`;
-        const responseText = getColLocal(['model answer', 'answer', 'response', 'generation', 'output'], r.rowData);
+
+        const modelName    = getC(['model code', 'model name', 'model']) || `Model ${String.fromCharCode(65 + idx)}`;
+        const responseText = getC(['model answer', 'answer', 'response', 'output', 'generation']) || 'No response found';
         const ev = evaluations[r.rowIndex] || { ef:'', rr:'', lq:'', pp:'', errors:[], comment:'' };
+
+        const checkboxesHtml = ERROR_TYPES.map(err => {
+            const checked = ev.errors.includes(err) ? 'checked' : '';
+            return `<label class="checkbox-item"><input type="checkbox" name="err_${r.rowIndex}" value="${err}" ${checked}> ${err}</label>`;
+        }).join('');
+
+        const radioHtml = (metric, label, desc) => `
+            <div class="metric-group">
+                <label>${label}</label>
+                <p class="metric-desc">${desc}</p>
+                <div class="radio-group">
+                    ${[0,1,2].map(v => `
+                        <input type="radio" name="${metric}_${r.rowIndex}" id="${metric}${v}_${r.rowIndex}" value="${v}" ${ev[metric]===String(v)?'checked':''}>
+                        <label for="${metric}${v}_${r.rowIndex}">${v}</label>
+                    `).join('')}
+                </div>
+            </div>`;
 
         const card = document.createElement('div');
         card.className = 'model-card';
-        // Build checkboxes HTML
-        const checkboxesHtml = ERROR_TYPES.map(err => {
-            const isChecked = ev.errors.includes(err) ? 'checked' : '';
-            return `
-                <label class="checkbox-item">
-                    <input type="checkbox" name="err_${r.rowIndex}" value="${err}" ${isChecked}>
-                    ${err}
-                </label>
-            `;
-        }).join('');
-
         card.innerHTML = `
             <h4>${modelName}</h4>
             <div class="scroll-box">${responseText}</div>
-            
             <div class="evaluation-form">
                 <div class="eval-grid">
-                    <div class="metric-group">
-                        <label>Epistemic Fidelity (EF)</label>
-                        <p class="metric-desc">0=Wrong, 1=Partial, 2=Fully correct</p>
-                        <div class="radio-group">
-                            <input type="radio" name="ef_${r.rowIndex}" id="ef0_${r.rowIndex}" value="0" ${ev.ef==='0'?'checked':''}><label for="ef0_${r.rowIndex}">0</label>
-                            <input type="radio" name="ef_${r.rowIndex}" id="ef1_${r.rowIndex}" value="1" ${ev.ef==='1'?'checked':''}><label for="ef1_${r.rowIndex}">1</label>
-                            <input type="radio" name="ef_${r.rowIndex}" id="ef2_${r.rowIndex}" value="2" ${ev.ef==='2'?'checked':''}><label for="ef2_${r.rowIndex}">2</label>
-                        </div>
-                    </div>
-
-                    <div class="metric-group">
-                        <label>Representational Richness (RR)</label>
-                        <p class="metric-desc">0=Empty, 1=Shallow, 2=Deep</p>
-                        <div class="radio-group">
-                            <input type="radio" name="rr_${r.rowIndex}" id="rr0_${r.rowIndex}" value="0" ${ev.rr==='0'?'checked':''}><label for="rr0_${r.rowIndex}">0</label>
-                            <input type="radio" name="rr_${r.rowIndex}" id="rr1_${r.rowIndex}" value="1" ${ev.rr==='1'?'checked':''}><label for="rr1_${r.rowIndex}">1</label>
-                            <input type="radio" name="rr_${r.rowIndex}" id="rr2_${r.rowIndex}" value="2" ${ev.rr==='2'?'checked':''}><label for="rr2_${r.rowIndex}">2</label>
-                        </div>
-                    </div>
-
-                    <div class="metric-group">
-                        <label>Linguistic Quality (LQ)</label>
-                        <p class="metric-desc">0=Unreadable, 1=Fluent w/ errors, 2=Perfect</p>
-                        <div class="radio-group">
-                            <input type="radio" name="lq_${r.rowIndex}" id="lq0_${r.rowIndex}" value="0" ${ev.lq==='0'?'checked':''}><label for="lq0_${r.rowIndex}">0</label>
-                            <input type="radio" name="lq_${r.rowIndex}" id="lq1_${r.rowIndex}" value="1" ${ev.lq==='1'?'checked':''}><label for="lq1_${r.rowIndex}">1</label>
-                            <input type="radio" name="lq_${r.rowIndex}" id="lq2_${r.rowIndex}" value="2" ${ev.lq==='2'?'checked':''}><label for="lq2_${r.rowIndex}">2</label>
-                        </div>
-                    </div>
-
-                    <div class="metric-group">
-                        <label>Pragmatic Proficiency (PP)</label>
-                        <p class="metric-desc">0=Off-topic, 1=Close, 2=Perfect fit</p>
-                        <div class="radio-group">
-                            <input type="radio" name="pp_${r.rowIndex}" id="pp0_${r.rowIndex}" value="0" ${ev.pp==='0'?'checked':''}><label for="pp0_${r.rowIndex}">0</label>
-                            <input type="radio" name="pp_${r.rowIndex}" id="pp1_${r.rowIndex}" value="1" ${ev.pp==='1'?'checked':''}><label for="pp1_${r.rowIndex}">1</label>
-                            <input type="radio" name="pp_${r.rowIndex}" id="pp2_${r.rowIndex}" value="2" ${ev.pp==='2'?'checked':''}><label for="pp2_${r.rowIndex}">2</label>
-                        </div>
-                    </div>
+                    ${radioHtml('ef', 'Epistemic Fidelity (EF)', '0 = Wrong or made-up &nbsp;|&nbsp; 1 = Partly correct &nbsp;|&nbsp; 2 = Fully correct and grounded')}
+                    ${radioHtml('rr', 'Representational Richness (RR)', '0 = Wrong or empty &nbsp;|&nbsp; 1 = Knows a little &nbsp;|&nbsp; 2 = Deep and accurate')}
+                    ${radioHtml('lq', 'Linguistic Quality (LQ)', '0 = Unreadable &nbsp;|&nbsp; 1 = Fluent with minor errors &nbsp;|&nbsp; 2 = Fluent, correct, well-structured')}
+                    ${radioHtml('pp', 'Pragmatic Proficiency (PP)', '0 = Off-topic &nbsp;|&nbsp; 1 = Close but off &nbsp;|&nbsp; 2 = Perfect fit')}
                 </div>
-
-                <div class="metric-group" style="margin-top: 1.5rem;">
-                    <label>Error Taxonomy (Select all that apply)</label>
-                    <div class="taxonomy-grid">
-                        ${checkboxesHtml}
-                    </div>
+                <div class="metric-group" style="margin-top:1.5rem;">
+                    <label>Error Taxonomy (select all that apply)</label>
+                    <div class="taxonomy-grid">${checkboxesHtml}</div>
                 </div>
-
                 <div class="metric-group">
                     <label>Comments</label>
                     <textarea id="comment_${r.rowIndex}" rows="2" placeholder="Any notes...">${ev.comment}</textarea>
                 </div>
-            </div>
-        `;
+            </div>`;
         ui.modelsContainer.appendChild(card);
     });
 
     ui.btnPrev.disabled = currentGroupIndex === 0;
-    ui.btnNext.innerText = currentGroupIndex === groupedData.length - 1 ? "Finish" : "Next Question";
+    ui.btnNext.innerText = currentGroupIndex === filteredData.length - 1 ? 'Finish ✓' : 'Next →';
 }
 
+// ─── Save ─────────────────────────────────────────────────────────────
 function saveCurrentState() {
-    const group = groupedData[currentGroupIndex];
-    
+    const group = filteredData[currentGroupIndex];
     group.rows.forEach(r => {
-        const getRadio = (name) => {
-            const rd = document.querySelector(`input[name="${name}_${r.rowIndex}"]:checked`);
-            return rd ? rd.value : '';
+        const getRadio = metric => {
+            const sel = document.querySelector(`input[name="${metric}_${r.rowIndex}"]:checked`);
+            return sel ? sel.value : '';
         };
-
-        const errorChecks = document.querySelectorAll(`input[name="err_${r.rowIndex}"]:checked`);
-        const errors = Array.from(errorChecks).map(cb => cb.value);
-
-        const comment = document.getElementById(`comment_${r.rowIndex}`).value;
-
-        evaluations[r.rowIndex] = {
-            ef: getRadio('ef'),
-            rr: getRadio('rr'),
-            lq: getRadio('lq'),
-            pp: getRadio('pp'),
-            errors: errors,
-            comment: comment
-        };
+        const errors = [...document.querySelectorAll(`input[name="err_${r.rowIndex}"]:checked`)].map(cb => cb.value);
+        const comment = (document.getElementById(`comment_${r.rowIndex}`) || {}).value || '';
+        evaluations[r.rowIndex] = { ef: getRadio('ef'), rr: getRadio('rr'), lq: getRadio('lq'), pp: getRadio('pp'), errors, comment };
     });
-
     localStorage.setItem(`cabIgboEval_${annotatorId}`, JSON.stringify(evaluations));
 }
 
 ui.btnNext.addEventListener('click', () => {
     saveCurrentState();
-    if (currentGroupIndex < groupedData.length - 1) {
+    if (currentGroupIndex < filteredData.length - 1) {
         currentGroupIndex++;
-        renderEvaluationScreen();
-        window.scrollTo(0,0);
+        renderEvalScreen();
+        window.scrollTo(0, 0);
     } else {
         renderDashboard();
         showScreen('dashboard');
@@ -348,8 +342,8 @@ ui.btnPrev.addEventListener('click', () => {
     saveCurrentState();
     if (currentGroupIndex > 0) {
         currentGroupIndex--;
-        renderEvaluationScreen();
-        window.scrollTo(0,0);
+        renderEvalScreen();
+        window.scrollTo(0, 0);
     }
 });
 
@@ -359,53 +353,22 @@ ui.btnSave.addEventListener('click', () => {
     showScreen('dashboard');
 });
 
-ui.btnBackDash.addEventListener('click', () => {
-    saveCurrentState();
-    renderDashboard();
-    showScreen('dashboard');
-});
-
-// Export
+// ─── Export ───────────────────────────────────────────────────────────
 ui.btnExportDash.addEventListener('click', () => {
     const exportData = flatData.map((row, idx) => {
         const ev = evaluations[idx] || { ef:'', rr:'', lq:'', pp:'', errors:[], comment:'' };
-        return {
-            ...row,
-            Annotator_ID: annotatorId,
-            EF_score: ev.ef,
-            RR_score: ev.rr,
-            LQ_score: ev.lq,
-            PP_score: ev.pp,
-            Error_Taxonomy: ev.errors.join(' | '),
-            Comments: ev.comment
-        };
+        return { ...row, Annotator_ID: annotatorId, EF_score: ev.ef, RR_score: ev.rr, LQ_score: ev.lq, PP_score: ev.pp, Error_Taxonomy: ev.errors.join(' | '), Comments: ev.comment };
     });
-
-    const worksheet = XLSX.utils.json_to_sheet(exportData);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Evaluations");
-    
-    const safeId = annotatorId.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'annotator';
-    XLSX.writeFile(workbook, `CAB_Igbo_Evaluations_${safeId}.xlsx`);
+    const ws = XLSX.utils.json_to_sheet(exportData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Evaluations");
+    XLSX.writeFile(wb, `CAB_Igbo_${annotatorId}_${selectedType.replace(/\s+/g,'_')}.xlsx`);
 });
 
-// Modal Logic
-const btnGuidelines = document.getElementById('btn-guidelines');
-const modalGuidelines = document.getElementById('guidelines-modal');
-const closeModal = document.getElementById('close-modal');
-
-if (btnGuidelines) {
-    btnGuidelines.addEventListener('click', () => {
-        modalGuidelines.classList.remove('hidden-modal');
-    });
-}
-if (closeModal) {
-    closeModal.addEventListener('click', () => {
-        modalGuidelines.classList.add('hidden-modal');
-    });
-}
-window.addEventListener('click', (e) => {
-    if (e.target === modalGuidelines) {
-        modalGuidelines.classList.add('hidden-modal');
-    }
-});
+// ─── Guidelines Modal ─────────────────────────────────────────────────
+const btnG = document.getElementById('btn-guidelines');
+const modalG = document.getElementById('guidelines-modal');
+const closeG = document.getElementById('close-modal');
+btnG.addEventListener('click', () => modalG.classList.remove('hidden-modal'));
+closeG.addEventListener('click', () => modalG.classList.add('hidden-modal'));
+window.addEventListener('click', e => { if (e.target === modalG) modalG.classList.add('hidden-modal'); });
