@@ -56,7 +56,7 @@ const ui = {
 };
 
 // ─── Allowed Annotator IDs (add more names here when needed) ─────────
-const ALLOWED_IDS = ['ngozi', 'peace'];
+const ALLOWED_IDS = ['annotator1', 'annotator2'];
 
 // ─── Login ────────────────────────────────────────────────────────────
 ui.btnLogin.addEventListener('click', async () => {
