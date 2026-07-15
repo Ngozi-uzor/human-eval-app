@@ -52,7 +52,8 @@ const ui = {
     modelsContainer:document.getElementById('models-container'),
     btnPrev:        document.getElementById('btn-prev-q'),
     btnSave:        document.getElementById('btn-save-q'),
-    btnNext:        document.getElementById('btn-next-q')
+    btnNext:        document.getElementById('btn-next-q'),
+    btnGuidelines:  document.getElementById('btn-guidelines')
 };
 
 // ─── Allowed Annotator IDs (add more names here when needed) ─────────
@@ -61,10 +62,10 @@ const ALLOWED_IDS = ['annotator1', 'annotator2'];
 // ─── Login ────────────────────────────────────────────────────────────
 ui.btnLogin.addEventListener('click', async () => {
     const val = ui.inputId.value.trim().toLowerCase();
-    if (!val) { alert("Please enter your Annotator ID."); return; }
+    if (!val) { alert("Please enter your annotator's ID."); return; }
 
     if (!ALLOWED_IDS.includes(val)) {
-        alert("❌ Unrecognised Annotator ID.\nPlease check your ID and try again.");
+        alert("❌ Unrecognised annotator's ID.\nPlease check your ID and try again.");
         return;
     }
 
@@ -78,6 +79,7 @@ ui.btnLogin.addEventListener('click', async () => {
         await fetchAndParseDataset();
         renderTypeSelection();
         showScreen('type');
+        ui.btnGuidelines.classList.remove('hidden-screen');
     } catch (err) {
         alert("Error loading dataset: " + err.message + "\n\nMake sure dataset.xlsx is in the same folder as index.html.");
     } finally {
@@ -90,6 +92,7 @@ ui.btnLogout.addEventListener('click', () => {
     selectedType = "";
     ui.inputId.value = "";
     showScreen('login');
+    ui.btnGuidelines.classList.add('hidden-screen');
 });
 
 // ─── Dataset Loading ──────────────────────────────────────────────────
@@ -421,9 +424,8 @@ ui.btnExportDash.addEventListener('click', () => {
 });
 
 // ─── Guidelines Modal ─────────────────────────────────────────────────
-const btnG = document.getElementById('btn-guidelines');
 const modalG = document.getElementById('guidelines-modal');
 const closeG = document.getElementById('close-modal');
-btnG.addEventListener('click', () => modalG.classList.remove('hidden-modal'));
+ui.btnGuidelines.addEventListener('click', () => modalG.classList.remove('hidden-modal'));
 closeG.addEventListener('click', () => modalG.classList.add('hidden-modal'));
 window.addEventListener('click', e => { if (e.target === modalG) modalG.classList.add('hidden-modal'); });
